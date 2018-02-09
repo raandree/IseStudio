@@ -1,0 +1,202 @@
+1..500 | ForEach-Object { $file = $psISE.CurrentPowerShellTab.Files | Get-Random; Set-PSBreakpoint -Script $file.FullPath -Line (Get-Random -Minimum 0 -Maximum $file.Editor.LineCount) }
+
+
+
+--------------------------------------------------------------------------------------
+
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+
+namespace IseAddons
+{
+    static class Extensions
+    {
+        public delegate TOut Action2<TIn, TOut>(TIn element);
+
+        public static IEnumerable<TOut> ForEach<TIn, TOut>(this IEnumerable<TIn> source, Action2<TIn, TOut> action)
+        {
+            if (source == null) { throw new ArgumentException(); }
+            if (action == null) { throw new ArgumentException(); }
+
+            foreach (TIn element in source)
+            {
+                TOut result = action(element);
+                yield return result;
+            }
+        }
+
+        public static IEnumerable<T> ForEach<T>(this IEnumerable<T> source, Action<T> action)
+        {
+            if (source == null) { throw new ArgumentException(); }
+            if (action == null) { throw new ArgumentException(); }
+
+            foreach (T element in source)
+            {
+                action(element);
+                yield return element;
+            }
+        }
+
+        public static void ForEach<T>(this IEnumerable<T> source, Action<T> action)
+        {
+            if (source == null) { throw new ArgumentException(); }
+            if (action == null) { throw new ArgumentException(); }
+
+            foreach (T element in source)
+            {
+                action(element);
+            }
+        }
+
+        public static IEnumerable<T> Mutate<T>(this IEnumerable<T> source, Action<T> action)
+        {
+            foreach (var item in source)
+            {
+                action(item);
+            }
+
+            return source;
+        }
+
+        public static IEnumerable<T> Mutate<T>(this IEnumerable<T> source, Action<T> action) where T : ICloneable
+        {
+            List<T> outList = new List<T>();
+            foreach (var item in source)
+            {
+                var ic = (T)item.Clone();
+                action(ic);
+                outList.Add(ic);
+            }
+
+            return outList;
+        }
+
+
+        public static IEnumerable<IEnumerable<T>> Chunk<T>(this IEnumerable<T> source, int n)
+        {
+            while (source.Any())
+            {
+                yield return source.Take(n);
+                source = source.Skip(n);
+            }
+        }
+
+        public static IEnumerable<T> Shuffle<T>(this IEnumerable<T> source)
+        {
+            return source.OrderBy(item => Guid.NewGuid());
+        }
+
+        public static T Randomize<T>(this IEnumerable<T> source)
+        {
+            return source.Shuffle().First();
+        }
+
+        public static string Merge<T>(this IEnumerable<T> source, string seperator = "")
+        {
+            return string.Join(seperator, source.ToList());
+        }
+
+        public static void Dump<T>(IEnumerable<T> source, TextWriter writer)
+        {
+            foreach (T item in source)
+            {
+                if (!item.GetType().ToString().StartsWith("System."))
+                {
+                    foreach (var p_loopVariable in item.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public))
+                    {
+                        var p = p_loopVariable;
+                        if (p.GetValue(item, null).ToString().Contains("+"))
+                        {
+                            writer.WriteLine("[{0}]", p.Name);
+                            DumpTree(p.GetValue(item, null), writer);
+                        }
+                        else
+                        {
+                            writer.WriteLine("{0} : {1}", p.Name, p.GetValue(item, null));
+                        }
+                    }
+                }
+                else
+                {
+                    writer.WriteLine(item);
+                }
+                Console.WriteLine();
+            }
+        }
+
+        private static void DumpTree(object obj, TextWriter writer, int intend = 0)
+        {
+            if (obj is ICollection)
+            {
+                foreach (var item_loopVariable in (ICollection)obj)
+                {
+                    var item = item_loopVariable;
+                    DumpTree(item, writer);
+                }
+            }
+            else
+            {
+                foreach (var p in obj.GetType().GetProperties(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
+                {
+                    if (p.GetValue(obj, null).ToString().Contains("+"))
+                    {
+                        intend += 1;
+                        writer.WriteLine("{0}[{1}]", " ".PadLeft(intend), p.Name);
+                        DumpTree(p.GetValue(obj, null), writer, intend);
+                    }
+                    else
+                    {
+                        writer.WriteLine("{0} {1} : {2}", " ".PadLeft(intend), p.Name, p.GetValue(obj, null));
+                    }
+                }
+            }
+        }
+
+
+        public static IEnumerable<R> With<T, R>(IEnumerable<T> source, Func<T, R> target)
+        {
+            return source.Select(target);
+        }
+
+        public static IEnumerable<T> Apply<T>(IEnumerable<T> source, Func<T, T> predicate)
+        {
+            foreach (var item_loopVariable in source)
+            {
+                var item = item_loopVariable;
+                yield return predicate(item);
+            }
+        }
+
+        public static IEnumerable<string> RegEx(IEnumerable<string> source, string pattern)
+        {
+            foreach (var item in source)
+            {
+                System.Text.RegularExpressions.Regex rx = new System.Text.RegularExpressions.Regex(pattern);
+                if (rx.IsMatch(item))
+                {
+                    yield return item;
+                }
+            }
+        }
+
+    }
+}
+
+
+#######################################################################################
+
+Func<MainWindow> fnc = delegate() { return Application.Current.Windows.Cast<MainWindow>().FirstOrDefault(wnd => wnd is MainWindow) as MainWindow; };
+            var iseWindow = Application.Current.Dispatcher.Invoke(fnc) as MainWindow;
+
+            FieldInfo tabControlField = iseWindow.GetType().GetField("runspaceTabControl", BindingFlags.Instance | BindingFlags.NonPublic);
+            RunspaceTabControl tabControl = (RunspaceTabControl)tabControlField.GetValue(iseWindow);
+            PowerShellTabCollection tabCollection = tabControl.ItemsSource as PowerShellTabCollection;
+            var currentTab = tabCollection.SelectedPowerShellTab;
+            var cmd = ScriptBlock.Create(string.Format("Test-ModuleManifest -Path '{0}'", @"C:\Users\Raimund\Documents\WindowsPowerShell\Modules\NTFSSecurity\NTFSSecurity.psd1"));
+            cmd = ScriptBlock.Create("dir c:\\");
+            var moduleInfo = currentTab.InvokeSynchronous()
